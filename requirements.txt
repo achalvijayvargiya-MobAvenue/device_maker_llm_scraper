@@ -23,7 +23,8 @@ tenacity>=8.3.0
 numpy>=1.26.0,<2.0.0
 pandas>=2.2.0,<3.0.0
 
-# Token counting
+# Token counting — optional on SageMaker AMI (see Run_Device_Collector.ipynb install cell)
+# App falls back to character-based estimates if tiktoken is not installed.
 tiktoken>=0.7.0
 
 # CLI

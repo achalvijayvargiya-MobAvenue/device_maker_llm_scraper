@@ -15,7 +15,11 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-import tiktoken
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None  # type: ignore[assignment]
+
 from tqdm.asyncio import tqdm as async_tqdm
 
 from app.config import get_settings
@@ -37,13 +41,14 @@ def _estimate_tokens(devices: list[DeviceInput]) -> int:
 
     Falls back to character-count heuristic on encoding failure.
     """
-    try:
-        enc = tiktoken.get_encoding("cl100k_base")
-        text = SYSTEM_PROMPT + build_user_message(devices)
-        return len(enc.encode(text))
-    except Exception:
-        text = SYSTEM_PROMPT + build_user_message(devices)
-        return len(text) // _CHARS_PER_TOKEN
+    text = SYSTEM_PROMPT + build_user_message(devices)
+    if tiktoken is not None:
+        try:
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(text))
+        except Exception:
+            pass
+    return len(text) // _CHARS_PER_TOKEN
 
 
 def split_into_batches(
