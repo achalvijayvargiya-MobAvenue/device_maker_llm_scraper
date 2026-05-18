@@ -1,0 +1,38 @@
+# ============================================================
+# Mobile Device Collector — Python Dependencies
+# Install: pip install -r requirements.txt
+# Python 3.11+
+# ============================================================
+
+# Core LLM
+openai>=1.30.0
+
+# Faster event loop on Linux/macOS (SageMaker runs Amazon Linux — this helps)
+uvloop>=0.19.0
+
+# Data validation
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# Retry logic
+tenacity>=8.3.0
+
+# Data processing & output
+pandas>=2.2.0
+
+# Token counting
+tiktoken>=0.7.0
+
+# CLI
+click>=8.1.0
+
+# Progress bar
+tqdm>=4.66.0
+
+# Environment loading
+python-dotenv>=1.0.0
+
+# ---- Dev / Test dependencies --------------------------------
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
+
+# (split into requirements-dev.txt for cleaner production installs)
