@@ -123,6 +123,16 @@ def load_devices_from_csv(path: Path) -> list[DeviceInput]:
     df = pd.read_csv(path, dtype=str)
     df.columns = [c.strip().lower() for c in df.columns]
 
+    # Common alternate column names (e.g. all_device_model.csv exports)
+    _aliases = {
+        "device_manufacturer": "brand",
+        "manufacturer": "brand",
+        "device_maker": "brand",
+        "device_model": "model",
+        "model_name": "model",
+    }
+    df = df.rename(columns={k: v for k, v in _aliases.items() if k in df.columns})
+
     if "brand" not in df.columns or "model" not in df.columns:
         raise ValueError(
             f"Input CSV must have 'brand' and 'model' columns. Found: {list(df.columns)}"

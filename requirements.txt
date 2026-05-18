@@ -18,7 +18,10 @@ pydantic-settings>=2.3.0
 tenacity>=8.3.0
 
 # Data processing & output
-pandas>=2.2.0
+# Pin numpy<2 on older SageMaker AMIs (GCC 7.x): numpy 2.x may fall back to
+# source builds that require GCC >= 9.3. Wheels for 1.26.x work on AL2.
+numpy>=1.26.0,<2.0.0
+pandas>=2.2.0,<3.0.0
 
 # Token counting
 tiktoken>=0.7.0

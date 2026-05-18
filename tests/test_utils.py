@@ -78,6 +78,18 @@ class TestLoadDevicesFromCsv:
         assert len(devices) == 2
         assert devices[0].brand == "Samsung"
 
+    def test_device_manufacturer_aliases(self, tmp_path):
+        csv_content = (
+            "device_manufacturer,device_model\n"
+            "samsung,galaxy a15 5g\n"
+        )
+        p = tmp_path / "devices.csv"
+        p.write_text(csv_content)
+        devices = load_devices_from_csv(p)
+        assert len(devices) == 1
+        assert devices[0].brand == "samsung"
+        assert devices[0].model == "galaxy a15 5g"
+
     def test_missing_column_raises(self, tmp_path):
         p = tmp_path / "bad.csv"
         p.write_text("name,version\nX,Y\n")
