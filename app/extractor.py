@@ -341,8 +341,8 @@ class DeviceExtractor:
                     logger.debug(
                         "Model-only retry improved spec for '%s %s' "
                         "(%d → %d key fields filled)",
-                        retry_spec.brand,
-                        retry_spec.model,
+                        retry_spec.device_manufacturer,
+                        retry_spec.device_model,
                         _count_filled(specs[original_idx]),
                         _count_filled(retry_spec),
                     )
