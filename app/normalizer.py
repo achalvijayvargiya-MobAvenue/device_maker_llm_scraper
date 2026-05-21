@@ -24,44 +24,61 @@ _REFERENCE_DATE = date(2026, 5, 1)
 # Chipset → tier classification rules (first match wins)
 # ---------------------------------------------------------------------------
 _CHIPSET_TIER_RULES: list[tuple[re.Pattern[str], str]] = [
+    # --- HIGH ---
     (re.compile(r"snapdragon\s+8\s+gen\s+[0-9]", re.I), "high"),
     (re.compile(r"snapdragon\s+8[0-9]{2}", re.I), "high"),
-    (re.compile(r"snapdragon\s+[Xx]\s*elite", re.I), "high"),
+    (re.compile(r"snapdragon\s+[Xx]\s*(elite|plus)", re.I), "high"),
     (re.compile(r"apple\s+[am]\d+", re.I), "high"),
     (re.compile(r"dimensity\s+9[0-9]{3}", re.I), "high"),
     (re.compile(r"exynos\s+2[0-9]{3}", re.I), "high"),
     (re.compile(r"kirin\s+9[0-9]{2}", re.I), "high"),
+    (re.compile(r"tensor\s+g[3-9]", re.I), "high"),          # Google Tensor G3+
+    # --- MID ---
     (re.compile(r"snapdragon\s+7s?\s+gen\s+[0-9]", re.I), "mid"),
     (re.compile(r"snapdragon\s+7[0-9]{2}", re.I), "mid"),
     (re.compile(r"snapdragon\s+6\s+gen\s+[0-9]", re.I), "mid"),
     (re.compile(r"snapdragon\s+6[0-9]{2}", re.I), "mid"),
     (re.compile(r"dimensity\s+[78][0-9]{3}", re.I), "mid"),
+    (re.compile(r"dimensity\s+6[0-9]{3}", re.I), "mid"),      # Dimensity 6100/6300
     (re.compile(r"helio\s+g[89][0-9]", re.I), "mid"),
+    (re.compile(r"helio\s+g[67][0-9]", re.I), "mid"),         # Helio G70/G80/G85
     (re.compile(r"exynos\s+1[0-9]{3}", re.I), "mid"),
+    (re.compile(r"kirin\s+[678][0-9]{2}", re.I), "mid"),      # Kirin 710-890
+    (re.compile(r"tensor\s+g[12]", re.I), "mid"),             # Google Tensor G1/G2
+    # --- LOW ---
     (re.compile(r"snapdragon\s+4\s+gen\s+[0-9]", re.I), "low"),
     (re.compile(r"snapdragon\s+4[0-9]{2}", re.I), "low"),
-    (re.compile(r"dimensity\s+[0-9]{3,4}(?!\s*0)", re.I), "low"),
-    (re.compile(r"helio\s+g3[0-9]", re.I), "low"),
+    (re.compile(r"snapdragon\s+[0-3][0-9]{2}", re.I), "low"),  # SD 200/425/430/450
+    (re.compile(r"dimensity\s+[0-9]{3}(?!\d)", re.I), "low"),  # Dimensity 700/810 3-digit
+    (re.compile(r"helio\s+g[3-5][0-9]", re.I), "low"),
+    (re.compile(r"helio\s+[ae]\d+", re.I), "low"),
     (re.compile(r"helio\s+p\d+", re.I), "low"),
     (re.compile(r"unisoc", re.I), "low"),
+    (re.compile(r"sc\d{4}", re.I), "low"),                     # Unisoc SC9863A etc.
     (re.compile(r"tiger\s+t\d+", re.I), "low"),
+    (re.compile(r"spreadtrum", re.I), "low"),
 ]
 
 # ---------------------------------------------------------------------------
 # GPU → class classification rules (first match wins)
 # ---------------------------------------------------------------------------
 _GPU_CLASS_RULES: list[tuple[re.Pattern[str], str]] = [
+    # --- HIGH ---
     (re.compile(r"adreno\s+7[4-9]\d", re.I), "high"),
     (re.compile(r"adreno\s+8\d{2}", re.I), "high"),
     (re.compile(r"apple\s+gpu", re.I), "high"),
     (re.compile(r"mali.*(g[7-9]\d|g1[0-9]\d)", re.I), "high"),
     (re.compile(r"immortalis", re.I), "high"),
+    # --- MID ---
     (re.compile(r"adreno\s+6[4-9]\d", re.I), "mid"),
     (re.compile(r"adreno\s+7[0-3]\d", re.I), "mid"),
-    (re.compile(r"mali.*(g6[0-9]|g7[0-9])", re.I), "mid"),
+    (re.compile(r"mali.*(g5[2-9]|g[67]\d)", re.I), "mid"),    # Mali G52/G57/G68/G72+
+    # --- WEAK ---
     (re.compile(r"adreno\s+[0-5]\d\d", re.I), "weak"),
-    (re.compile(r"mali.*(g5[0-9]|g[0-4]\d)", re.I), "weak"),
+    (re.compile(r"mali.*(g[0-4]\d|g5[01])", re.I), "weak"),   # Mali G51 and below
+    (re.compile(r"mali.*(t[0-9]{3}|mp\d)", re.I), "weak"),    # Mali-T series (legacy)
     (re.compile(r"powervr", re.I), "weak"),
+    (re.compile(r"vivante", re.I), "weak"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -180,19 +197,30 @@ def classify_gpu_class(gpu_or_chipset: Optional[str]) -> Optional[str]:
 
 
 def normalize_wifi(wifi: Optional[str]) -> Optional[str]:
-    """Normalize wifi version to 'wifi 5', 'wifi 6', 'wifi 6e', or 'wifi 7'."""
+    """
+    Normalize wifi version to 'wifi 5', 'wifi 6', 'wifi 6e', or 'wifi 7'.
+    If the string doesn't match a known pattern, returns it as-is (don't null it).
+    """
     if not wifi:
         return None
     for pattern, standard in _WIFI_RULES:
         if pattern.search(wifi):
             return standard
-    return None
+    # Pass through the raw value rather than losing data
+    return wifi.strip()
 
 
 def normalize_resolution(raw: Any) -> Optional[int]:
-    """Map a raw resolution value to one of 720, 1080, 1440, 2160."""
+    """
+    Map a raw resolution value to the nearest standard bucket (720/1080/1440/2160).
+    If a plain integer is passed (e.g. already bucketed by LLM), return it directly
+    rather than forcing it through bucket logic and potentially losing precision.
+    """
     if raw is None:
         return None
+    # Plain integer already provided by LLM — accept it directly
+    if isinstance(raw, int) and raw >= 100:
+        return raw
     s = str(raw).lower()
     if "2160" in s or "4k" in s or "uhd" in s:
         return 2160
@@ -213,10 +241,14 @@ def normalize_resolution(raw: Any) -> Optional[int]:
 
 
 def normalize_cooling_system(raw: Optional[str]) -> Optional[str]:
-    """Normalize cooling system string to canonical form."""
+    """
+    Normalize cooling system string to canonical form.
+    Falls back to the raw string (stripped) rather than discarding unrecognized values.
+    """
     if not raw:
         return None
-    return _COOLING_MAP.get(raw.strip().lower(), None)
+    normalized = _COOLING_MAP.get(raw.strip().lower())
+    return normalized if normalized is not None else raw.strip()
 
 
 def calculate_months_since_launch(launch_date: Optional[str]) -> Optional[int]:
@@ -355,3 +387,50 @@ def normalize(raw: RawDeviceSpec) -> DeviceSpec:
     )
 
     return spec
+
+
+def derive_missing_fields(spec: DeviceSpec) -> DeviceSpec:
+    """
+    Fill in deterministically-derivable fields that are currently null.
+
+    Applies:
+    - ``chipset_tier`` derived from ``chipset`` when not already set.
+    - ``gpu_class`` derived from ``cpu_gpu`` (which contains the GPU name) when not set.
+    - ``months_since_launch`` recalculated from ``launch_date`` when not set.
+
+    This is useful after GSMArena scraping, where these fields come from
+    code classification rather than LLM output.
+
+    Parameters
+    ----------
+    spec:
+        A DeviceSpec that may have null chipset_tier / gpu_class / months_since_launch.
+
+    Returns
+    -------
+    DeviceSpec
+        A new DeviceSpec with derived fields filled where they were None.
+    """
+    data = spec.model_dump()
+
+    if data.get("chipset_tier") is None and data.get("chipset"):
+        data["chipset_tier"] = classify_chipset_tier(data["chipset"])
+
+    if data.get("gpu_class") is None:
+        data["gpu_class"] = classify_gpu_class(
+            data.get("cpu_gpu") or data.get("chipset")
+        )
+
+    if data.get("months_since_launch") is None and data.get("launch_date"):
+        data["months_since_launch"] = calculate_months_since_launch(data["launch_date"])
+
+    # Re-validate the wifi field using the normalizer rules in case it's a raw string
+    if data.get("wifi"):
+        normalized_wifi = normalize_wifi(data["wifi"])
+        data["wifi"] = normalized_wifi
+
+    # Rename five_g_supported key if it was serialized as 5g_supported
+    if "5g_supported" in data and "five_g_supported" not in data:
+        data["five_g_supported"] = data.pop("5g_supported")
+
+    return DeviceSpec(**{k: v for k, v in data.items() if k in DeviceSpec.model_fields})

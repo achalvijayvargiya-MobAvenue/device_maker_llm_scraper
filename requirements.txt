@@ -36,6 +36,13 @@ tqdm>=4.66.0
 # Environment loading
 python-dotenv>=1.0.0
 
+# HTML parsing (GSMArena scraper)
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Fuzzy string matching (GSMArena search result matching)
+rapidfuzz>=3.0.0
+
 # ---- Dev / Test dependencies --------------------------------
 # Install with: pip install -r requirements.txt -r requirements-dev.txt
 

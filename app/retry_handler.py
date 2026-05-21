@@ -150,6 +150,14 @@ async def extract_json_with_repair(
         try:
             parsed = json.loads(cleaned)
             if not isinstance(parsed, list):
+                if isinstance(parsed, dict):
+                    # Wrapped array: {"items": [...]} or {"results": [...]}
+                    for v in parsed.values():
+                        if isinstance(v, list):
+                            return v
+                    # Single device spec returned as a plain object — wrap it
+                    if "device_model" in parsed or "device_manufacturer" in parsed:
+                        return [parsed]
                 raise ValueError(f"Expected JSON array, got {type(parsed).__name__}")
             return parsed
         except (json.JSONDecodeError, ValueError) as exc:

@@ -88,6 +88,7 @@ class LLMClient:
         messages: list[dict[str, Any]],
         *,
         request_id: str = "",
+        json_mode: bool = False,
     ) -> LLMResponse:
         """
         Send a chat completion request and return an LLMResponse.
@@ -126,7 +127,7 @@ class LLMClient:
             messages=messages,  # type: ignore[arg-type]
             temperature=settings.openai_temperature,
             max_tokens=settings.openai_max_tokens,
-            response_format={"type": "text"},  # Let prompt enforce JSON
+            response_format={"type": "json_object"} if json_mode else {"type": "text"},
         )
 
         latency_ms = (time.perf_counter() - t0) * 1000

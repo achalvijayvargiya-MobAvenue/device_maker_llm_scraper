@@ -1,11 +1,16 @@
 """
 CLI entry point for the mobile device specification collector.
 
-Usage examples:
+Usage examples — LLM-only strategy (original):
     python app/main.py --input data/input/devices.csv --batch-size 5
     python app/main.py --input data/input/devices.json --batch-size 8 --resume
     python app/main.py --input data/input/devices.csv --replay-failed
-    python app/main.py --input data/input/devices.csv --no-cache --concurrency 2
+
+Usage examples — scrape-first strategy (recommended for pending_device.csv):
+    python app/main.py --input data/input/pending_device.csv --strategy scrape-first
+    python app/main.py --input data/input/pending_device.csv --strategy scrape-first --resume
+    python app/main.py --input data/input/pending_device.csv --strategy scrape-first --skip-enrich
+    python app/main.py --input data/input/pending_device.csv --strategy scrape-first --skip-llm-fallback
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ import click
 from app.batch_processor import BatchProcessor
 from app.config import get_settings
 from app.logger import get_logger, setup_logging
+from app.scrape_pipeline import ScrapePipeline, write_skipped_csv
 from app.utils import load_devices, print_summary, write_csv, write_json
 
 
@@ -93,6 +99,39 @@ from app.utils import load_devices, print_summary, write_csv, write_json
     default=False,
     help="Print batch plan without calling the API.",
 )
+@click.option(
+    "--strategy",
+    default="llm-only",
+    type=click.Choice(["llm-only", "scrape-first"], case_sensitive=False),
+    show_default=True,
+    help=(
+        "Extraction strategy. "
+        "'scrape-first' uses GSMArena as primary source with LLM fallback. "
+        "'llm-only' uses the original pure-LLM batch approach."
+    ),
+)
+@click.option(
+    "--skip-enrich",
+    is_flag=True,
+    default=False,
+    help="[scrape-first] Skip the LLM enrichment pass for GSMArena-found devices.",
+)
+@click.option(
+    "--skip-llm-fallback",
+    is_flag=True,
+    default=False,
+    help="[scrape-first] Skip LLM fallback; emit null rows for devices not on GSMArena.",
+)
+@click.option(
+    "--skip-scrape",
+    is_flag=True,
+    default=False,
+    help=(
+        "[scrape-first] Skip GSMArena scraping entirely. "
+        "Checkpoint found-specs are preserved; all other devices go straight to LLM. "
+        "Use this if GSMArena is rate-limiting."
+    ),
+)
 def main(
     input_path: Path,
     batch_size: int | None,
@@ -103,12 +142,21 @@ def main(
     no_cache: bool,
     log_level: str | None,
     dry_run: bool,
+    strategy: str,
+    skip_enrich: bool,
+    skip_llm_fallback: bool,
+    skip_scrape: bool,
 ) -> None:
     """
     Mobile Device Specification Collector
 
-    Reads a list of devices from INPUT and extracts structured specs via
-    OpenAI LLM APIs, writing results to CSV and JSON.
+    Reads a list of devices from INPUT and extracts structured specs.
+
+    \b
+    Strategies:
+      llm-only     — original pure-LLM batch approach (default)
+      scrape-first — GSMArena scraping as primary source, LLM as fallback
+                     (recommended for large pending lists)
     """
     settings = get_settings()
 
@@ -158,11 +206,52 @@ def main(
             click.echo(f"  Batch {i+1:3d} ({len(b):2d} devices): {names}")
         return
 
+    stem = input_path.stem
+    json_path = settings.output_dir / f"{stem}_output.json"
+    csv_path = settings.output_dir / f"{stem}_output.csv"
+
+    # ------------------------------------------------------------------ #
+    # SCRAPE-FIRST strategy                                               #
+    # ------------------------------------------------------------------ #
+    if strategy.lower() == "scrape-first":
+        pipeline = ScrapePipeline(
+            resume=resume,
+            skip_enrich=skip_enrich,
+            skip_llm_fallback=skip_llm_fallback,
+            skip_scrape=skip_scrape,
+        )
+        try:
+            specs, skipped_records, pipe_summary = asyncio.run(
+                pipeline.run(devices)
+            )
+        except KeyboardInterrupt:
+            click.echo("\nInterrupted. Partial progress saved to checkpoint.", err=True)
+            sys.exit(130)
+        except Exception as exc:
+            logger.exception("Fatal error in scrape pipeline: %s", exc)
+            sys.exit(1)
+
+        write_json(specs, json_path)
+        write_csv(specs, csv_path)
+
+        # Write skipped-devices audit file
+        skipped_path = settings.output_dir / f"{stem}_skipped.csv"
+        write_skipped_csv(skipped_records, skipped_path)
+
+        pipe_summary.print()
+        click.echo(f"\nJSON         → {json_path}")
+        click.echo(f"CSV          → {csv_path}")
+        click.echo(f"Skipped audit→ {skipped_path}")
+        return
+
+    # ------------------------------------------------------------------ #
+    # LLM-ONLY strategy (original)                                        #
+    # ------------------------------------------------------------------ #
+
     # If not resuming, clear existing checkpoint
     if not resume and not replay_failed:
         _clear_checkpoint(settings)
 
-    # Run extraction
     processor = BatchProcessor()
     try:
         specs, summary = asyncio.run(
@@ -174,11 +263,6 @@ def main(
     except Exception as exc:
         logger.exception("Fatal error during extraction: %s", exc)
         sys.exit(1)
-
-    # Write outputs
-    stem = input_path.stem
-    json_path = settings.output_dir / f"{stem}_output.json"
-    csv_path = settings.output_dir / f"{stem}_output.csv"
 
     write_json(specs, json_path)
     write_csv(specs, csv_path)

@@ -96,31 +96,31 @@ class DeviceSpec(BaseModel):
     """
 
     # Display
-    display_size_inch: Optional[float] = Field(None, ge=1.0, le=20.0)
+    display_size_inch: Optional[float] = Field(None, ge=0.1)
     screen_resolution: Optional[int] = None
-    display_refresh_hz: Optional[int] = Field(None, ge=30, le=500)
+    display_refresh_hz: Optional[int] = Field(None, ge=1)
 
     # Pricing
     price_inr: Optional[int] = Field(None, ge=0)
 
     # Camera
-    back_camera_mp_total: Optional[int] = Field(None, ge=0, le=2000)
-    front_camera_mp: Optional[int] = Field(None, ge=0, le=500)
+    back_camera_mp_total: Optional[int] = Field(None, ge=0)
+    front_camera_mp: Optional[int] = Field(None, ge=0)
 
     # Processor / Performance
     cpu_gpu: Optional[str] = None
     chipset: Optional[str] = None
     chipset_tier: Optional[str] = None
-    cpu_cores: Optional[int] = Field(None, ge=1, le=64)
+    cpu_cores: Optional[int] = Field(None, ge=1)
     gpu_class: Optional[str] = None
     antutu_score: Optional[int] = Field(None, ge=0)
 
     # Memory
-    ram_gb: Optional[int] = Field(None, ge=1, le=256)
-    storage_gb: Optional[int] = Field(None, ge=1, le=4096)
+    ram_gb: Optional[int] = Field(None, ge=1)
+    storage_gb: Optional[int] = Field(None, ge=1)
 
     # Battery & Thermal
-    battery_mah: Optional[int] = Field(None, ge=500, le=30000)
+    battery_mah: Optional[int] = Field(None, ge=0)
     cooling_system: Optional[str] = None
 
     # Connectivity
@@ -139,29 +139,40 @@ class DeviceSpec(BaseModel):
     @field_validator("chipset_tier")
     @classmethod
     def _validate_chipset_tier(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in ("low", "mid", "high"):
+        if v is None:
             return None
-        return v
+        v_low = v.strip().lower()
+        # Accept known values; also tolerate common variants
+        if v_low in ("low", "mid", "medium", "high"):
+            return "mid" if v_low == "medium" else v_low
+        return v.strip()  # pass through unknown values rather than nulling
 
     @field_validator("gpu_class")
     @classmethod
     def _validate_gpu_class(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in ("weak", "mid", "high"):
+        if v is None:
             return None
-        return v
+        v_low = v.strip().lower()
+        if v_low in ("weak", "low", "mid", "medium", "high"):
+            if v_low in ("weak", "low"):
+                return "weak"
+            if v_low == "medium":
+                return "mid"
+            return v_low
+        return v.strip()  # pass through unknown values
 
     @field_validator("wifi")
     @classmethod
     def _validate_wifi(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in {"wifi 5", "wifi 6", "wifi 6e", "wifi 7"}:
-            return None
-        return v
+        # Pass through any non-null wifi string — normalization already ran
+        return v.strip() if v is not None else None
 
     @field_validator("screen_resolution")
     @classmethod
     def _validate_resolution(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and v not in {720, 1080, 1440, 2160}:
-            return None
+        # Accept any plausible resolution — don't restrict to 4 buckets
+        if v is not None and v < 100:
+            return None  # clearly garbage
         return v
 
     def to_flat_dict(self) -> dict:

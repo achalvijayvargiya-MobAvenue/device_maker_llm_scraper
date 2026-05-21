@@ -67,8 +67,8 @@ Extract accurate technical specifications for each mobile device in the provided
 STRICT OUTPUT RULES:
 1. Return ONLY a valid JSON array — no markdown, no backticks, no explanations.
 2. Each element corresponds to one device in the input list, in the same order.
-3. Use null (JSON null, not the string "null") for any field you are not certain about.
-4. Do NOT guess, invent, or hallucinate values. Accuracy is more important than completeness.
+3. Use null ONLY when you have absolutely no information about a field — completeness is the priority.
+4. Use your best knowledge and estimate for technical specs. Do NOT invent device_manufacturer or device_model names, but DO fill every technical field you can reasonably estimate.
 5. Normalize all values according to the rules below before outputting.
 
 NORMALIZATION RULES:
@@ -226,6 +226,80 @@ def build_model_only_messages(devices: list[DeviceInput]) -> list[dict[str, Any]
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_model_only_user_message(devices)},
+    ]
+
+
+ENRICHMENT_SYSTEM_PROMPT = """\
+You are a mobile device specification expert. You will be given a list of devices
+with their chipset names already known. Your job is to fill in THREE specific fields
+that cannot be scraped from spec sheets:
+
+1. antutu_score  — approximate AnTuTu v10 benchmark score (integer). Use the
+   typical/average score for the chipset. Return null if genuinely unknown.
+2. cooling_system — exactly one of:
+   "Vapor Chamber", "Liquid Cooling", "Graphite Sheet", "Standard", or null.
+   • Vapor Chamber  → flagship/gaming phones with large vapor chamber heat spreader
+   • Liquid Cooling → mid-range devices with liquid cooling pipes
+   • Graphite Sheet → budget/mid with graphite thermal pad
+   • Standard       → basic thermal management, no special system
+   • null           → truly unknown
+3. price_inr — official India launch price in INR (integer, no symbol). Return null
+   if the device was never officially sold in India or price is unknown.
+
+STRICT OUTPUT RULES:
+1. Return ONLY a valid JSON array — no markdown, no backticks, no explanations.
+2. Each element corresponds to one device in the input list, in the same order.
+3. Use null (JSON null) for any field you are not certain about.
+4. Do NOT guess antutu scores — only return them if you know the chipset's typical score.
+
+REQUIRED OUTPUT SCHEMA:
+[
+  {
+    "device_manufacturer": "string",
+    "device_model": "string",
+    "antutu_score": integer | null,
+    "cooling_system": "Vapor Chamber" | "Liquid Cooling" | "Graphite Sheet" | "Standard" | null,
+    "price_inr": integer | null
+  }
+]
+"""
+
+
+def build_enrichment_user_message(devices: list) -> str:
+    """
+    Build the user message for an enrichment-only LLM pass.
+
+    Parameters
+    ----------
+    devices:
+        List of dicts with keys: brand, model, chipset (can be None).
+
+    Returns
+    -------
+    str
+    """
+    device_list = [
+        {
+            "brand": d.get("brand", ""),
+            "model": d.get("model", ""),
+            "chipset": d.get("chipset") or "unknown",
+        }
+        for d in devices
+    ]
+    devices_json = json.dumps(device_list, indent=2, ensure_ascii=False)
+    return (
+        f"Fill in antutu_score, cooling_system, and price_inr for the following "
+        f"{len(devices)} device(s):\n\n"
+        f"{devices_json}\n\n"
+        "Return ONLY the JSON array. No other text."
+    )
+
+
+def build_enrichment_messages(devices: list) -> list[dict]:
+    """Full messages payload for the enrichment pass."""
+    return [
+        {"role": "system", "content": ENRICHMENT_SYSTEM_PROMPT},
+        {"role": "user", "content": build_enrichment_user_message(devices)},
     ]
 
 

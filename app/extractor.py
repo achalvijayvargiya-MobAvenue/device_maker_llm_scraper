@@ -27,6 +27,7 @@ from app.prompts import (
     build_messages,
     build_model_only_messages,
     build_repair_messages,
+    build_enrichment_messages,
     is_generic_brand,
 )
 from app.retry_handler import extract_json_with_repair, with_retry
@@ -136,6 +137,8 @@ async def _llm_extract(
     messages: list[dict],
     devices: list[DeviceInput],
     request_id: str,
+    *,
+    json_mode: bool = False,
 ) -> tuple[list[dict], Optional[LLMResponse]]:
     """
     Run a single LLM extraction call with JSON repair.
@@ -154,7 +157,9 @@ async def _llm_extract(
 
     async def _call() -> str:
         nonlocal llm_response
-        llm_response = await llm.complete(messages, request_id=request_id)
+        llm_response = await llm.complete(
+            messages, request_id=request_id, json_mode=json_mode
+        )
         return llm_response.content
 
     async def _repair(malformed: str, error_detail: str) -> str:
@@ -206,6 +211,107 @@ class DeviceExtractor:
             await self._llm.__aexit__(*args)
         if self._settings.enable_cache:
             save_cache(self._settings.cache_file, self._cache)
+
+    async def enrich_batch(
+        self,
+        specs: list[DeviceSpec],
+        *,
+        batch_index: int = 0,
+    ) -> list[DeviceSpec]:
+        """
+        Enrichment-only pass: fill antutu_score, cooling_system, price_inr
+        for devices already scraped from GSMArena.
+
+        Sends a cheap, focused LLM call for just 3 fields.  The heavy
+        structural fields (chipset, RAM, battery, etc.) are already populated
+        from GSMArena, so we use JSON mode for reliable output and keep
+        batch_size small to avoid contamination.
+
+        Parameters
+        ----------
+        specs:
+            DeviceSpec objects coming from the GSMArena layer.
+        batch_index:
+            Used for request-ID logging.
+
+        Returns
+        -------
+        list[DeviceSpec]
+            Same length as input, with enriched fields merged in.
+        """
+        request_id = f"enrich-{batch_index:04d}-{uuid.uuid4().hex[:6]}"
+
+        # Only send devices that are actually missing one of the 3 enrichment fields
+        needs_enrichment = [
+            i for i, s in enumerate(specs)
+            if s.antutu_score is None or s.cooling_system is None or s.price_inr is None
+        ]
+
+        if not needs_enrichment:
+            return specs
+
+        enrich_devices = [
+            {
+                "brand": specs[i].device_manufacturer or "",
+                "model": specs[i].device_model or "",
+                "chipset": specs[i].chipset or "",
+            }
+            for i in needs_enrichment
+        ]
+
+        messages = build_enrichment_messages(enrich_devices)
+
+        try:
+            raw_items, _ = await _llm_extract(
+                self._llm,
+                messages,
+                # We pass dummy DeviceInput list just to satisfy the signature;
+                # repair logic uses the device list only for logging context.
+                [DeviceInput(brand=d["brand"], model=d["model"]) for d in enrich_devices],
+                request_id,
+                json_mode=False,  # json_mode forces an object {}; we need an array []
+            )
+        except Exception as exc:
+            logger.warning("Enrichment pass failed for batch %d: %s", batch_index, exc)
+            return specs
+
+        # Merge enriched fields back
+        result = list(specs)
+        for list_pos, original_idx in enumerate(needs_enrichment):
+            if list_pos >= len(raw_items):
+                break
+            item = raw_items[list_pos]
+            if not isinstance(item, dict):
+                continue
+            spec = result[original_idx]
+            data = spec.model_dump()
+
+            if spec.antutu_score is None and item.get("antutu_score") is not None:
+                try:
+                    data["antutu_score"] = int(float(str(item["antutu_score"])))
+                except (ValueError, TypeError):
+                    pass
+
+            if spec.cooling_system is None and item.get("cooling_system"):
+                cs = str(item["cooling_system"]).strip()
+                if cs:
+                    data["cooling_system"] = cs
+
+            if spec.price_inr is None and item.get("price_inr") is not None:
+                try:
+                    data["price_inr"] = int(float(str(item["price_inr"])))
+                except (ValueError, TypeError):
+                    pass
+
+            # Rebuild with validated data
+            try:
+                result[original_idx] = DeviceSpec(**{
+                    k: v for k, v in data.items() if k in DeviceSpec.model_fields
+                })
+            except Exception as exc:
+                logger.debug("Enrichment merge failed for index %d: %s", original_idx, exc)
+
+        return result
 
     async def extract_batch(
         self,
@@ -260,6 +366,7 @@ class DeviceExtractor:
                     build_messages(devices),
                     devices,
                     request_id,
+                    json_mode=False,  # json_mode forces {} object; we need [] array
                 )
                 if resp:
                     total_input_tokens += resp.input_tokens
