@@ -6,6 +6,9 @@ import sys
 import time
 import urllib.parse
 from pathlib import Path
+import io
+import re
+import csv
 
 import boto3
 import pandas as pd
@@ -23,10 +26,84 @@ def generate_date_conditions(start_date: datetime.date, end_date: datetime.date)
     
     return " OR\n      ".join(conditions)
 
+def fix_quoted_newlines(text):
+    result = []
+    in_quotes = False
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char == '"':
+            in_quotes = not in_quotes
+            result.append(char)
+        elif in_quotes and char in ("\n", "\r", "\t"):
+            result.append(" ")
+        else:
+            result.append(char)
+        i += 1
+    return "".join(result)
+
+def clean_text_val(val):
+    if pd.isna(val):
+        return val
+    val = str(val)
+    val = re.sub(r"<[^>]+>", " ", val)
+    val = re.sub(r"&[a-zA-Z]+;", " ", val)
+    val = val.replace('""', '"')
+    val = re.sub(r"[\r\n\t]+", " ", val)
+    val = re.sub(r"\s+", " ", val)
+    return val.strip()
+
+def clean_and_save_data(filepath: Path) -> Path:
+    print(f"\n--- Cleaning Scraped Data: {filepath} ---")
+    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        raw = f.read()
+
+    print(f"Raw size: {len(raw):,} chars")
+    fixed = fix_quoted_newlines(raw)
+    print("Fixed embedded newlines/tabs inside quoted text")
+
+    df = pd.read_csv(
+        io.StringIO(fixed),
+        engine="python",
+        on_bad_lines="skip"
+    )
+
+    print(f"Loaded rows: {len(df):,}")
+    print(f"Columns: {len(df.columns)}")
+
+    for col in df.select_dtypes(include="object").columns:
+        df[col] = df[col].apply(clean_text_val)
+
+    for col in df.columns:
+        try:
+            temp = pd.to_numeric(df[col])
+            # If the column became a float but all non-null values are whole numbers,
+            # cast to 'Int64' (nullable integer) so it writes '8' instead of '8.0' to CSV.
+            if pd.api.types.is_float_dtype(temp) and (temp.dropna() % 1 == 0).all():
+                df[col] = temp.astype("Int64")
+            else:
+                df[col] = temp
+        except:
+            pass
+
+    output_path = filepath.with_name(f"{filepath.stem}_clean.csv")
+    df.to_csv(
+        output_path,
+        index=False,
+        encoding="utf-8-sig",
+        quoting=csv.QUOTE_MINIMAL
+    )
+
+    print(f"Saved cleaned data: {output_path}")
+    print(f"Rows: {len(df):,}")
+    print(f"Columns: {df.shape[1]}\n")
+    return output_path
+
 def main():
     parser = argparse.ArgumentParser(description="Automate fetching new devices from Athena and running LLM Scraper.")
     parser.add_argument("--start-date", required=True, help="Start date in YYYY-MM-DD format")
     parser.add_argument("--end-date", required=True, help="End date in YYYY-MM-DD format")
+    parser.add_argument("--limit", type=int, help="Optional limit for the number of devices to fetch and scrape.")
     args = parser.parse_args()
 
     try:
@@ -66,8 +143,13 @@ WHERE (
 )
 EXCEPT
 SELECT DISTINCT LOWER(TRIM(device_model)) as device_model , LOWER(TRIM(device_manufacturer)) as device_manufacturer
-FROM imp_tables.device_specs_iceberg;
+FROM imp_tables.device_specs_iceberg
     """.strip()
+    
+    if args.limit:
+        query += f"\nLIMIT {args.limit};"
+    else:
+        query += ";"
     
     print("\n--- Query to Execute ---")
     print(query)
@@ -148,24 +230,47 @@ FROM imp_tables.device_specs_iceberg;
         sys.exit(1)
 
     # 6. Execute the LLM Scraper
-    # print("\nStarting the LLM Scraper...")
-    # scraper_cmd = [sys.executable, "app/main.py", "--input", str(csv_file_path)]
-    # print(f"Running command: {' '.join(scraper_cmd)}")
+    print("\nStarting the LLM Scraper...")
+    scraper_cmd = [sys.executable, "app/main.py", "--input", str(csv_file_path)]
+    print(f"Running command: {' '.join(scraper_cmd)}")
     
-    # try:
-    #     # We use subprocess.run so the user can see the stdout/stderr stream directly
-    #     result = subprocess.run(scraper_cmd)
-    #     if result.returncode != 0:
-    #         print(f"\nScraper exited with non-zero status code: {result.returncode}")
-    #         sys.exit(result.returncode)
-    #     else:
-    #         print("\nAutomation completed successfully!")
-    # except KeyboardInterrupt:
-    #     print("\nProcess interrupted by user.")
-    #     sys.exit(130)
-    # except Exception as e:
-    #     print(f"Error executing scraper: {e}")
-    #     sys.exit(1)
+    try:
+        # We use subprocess.run so the user can see the stdout/stderr stream directly
+        result = subprocess.run(scraper_cmd)
+        if result.returncode != 0:
+            print(f"\nScraper exited with non-zero status code: {result.returncode}")
+            sys.exit(result.returncode)
+        else:
+            print("\nScraper completed successfully!")
+            
+            # 7. Clean the output data
+            output_csv_filename = f"{csv_file_path.stem}_output.csv"
+            output_csv_path = Path("data/output") / output_csv_filename
+            
+            if not output_csv_path.exists():
+                print(f"Warning: Expected output CSV not found at {output_csv_path}")
+                print("Skipping cleaning and S3 upload.")
+            else:
+                clean_csv_path = clean_and_save_data(output_csv_path)
+                
+                # 8. Upload to S3
+                print(f"\nUploading cleaned data to S3...")
+                s3_bucket = "mobavenue-simplismart-aws-s3-apse-sg"
+                s3_key = f"rtb/data/mis/device_feature/{clean_csv_path.name}"
+                try:
+                    s3_client.upload_file(str(clean_csv_path), s3_bucket, s3_key)
+                    print(f"Successfully uploaded {clean_csv_path.name} to s3://{s3_bucket}/{s3_key}")
+                except Exception as e:
+                    print(f"Error uploading to S3: {e}")
+                    sys.exit(1)
+                    
+            print("\nAutomation completed successfully!")
+    except KeyboardInterrupt:
+        print("\nProcess interrupted by user.")
+        sys.exit(130)
+    except Exception as e:
+        print(f"Error executing scraper: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
