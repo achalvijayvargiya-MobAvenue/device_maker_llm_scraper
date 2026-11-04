@@ -349,7 +349,7 @@ FROM prod.device_features
                     date_folder = now.strftime("%Y%m%d")
                     timestamp = now.strftime("%Y%m%d_%H%M%S")
                     s3_filename = args.s3_filename if args.s3_filename else f"{timestamp}.csv"
-                    s3_dest_key_base = f"rtb/data/aayushi/device_features/{date_folder}/{s3_filename}"
+                    s3_dest_key_base = f"rtb/data/ml/device_features/{date_folder}/{s3_filename}"
                     
                     try:
                         # Upload to base folder
