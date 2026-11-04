@@ -63,9 +63,9 @@ mobile_device_collector/
 
 ### 1. Clone & Install
 
+Python 3.11 or newer is required (`pyproject.toml` and the header of `requirements.txt`). Run the commands below from this repository's root. In the ML Data Collection Portal that directory is `device-data`.
+
 ```bash
-git clone <repo-url>
-cd mobile_device_collector
 python -m venv .venv
 # Windows
 .venv\Scripts\activate
@@ -102,6 +102,24 @@ python app/main.py --input data/input/devices.csv --dry-run
 
 # JSON input
 python app/main.py --input data/input/devices.json
+```
+
+`--strategy` defaults to `llm-only`. `app/main.py` also accepts `scrape-first`, which uses GSMArena first and the LLM as a fallback:
+
+```bash
+python app/main.py --input data/input/pending_device.csv --strategy scrape-first
+python app/main.py --input data/input/pending_device.csv --strategy scrape-first --resume
+python app/main.py --input data/input/pending_device.csv --strategy scrape-first --skip-enrich
+python app/main.py --input data/input/pending_device.csv --strategy scrape-first --skip-llm-fallback
+```
+
+`--skip-scrape` skips GSMArena and sends devices that are not already checkpointed to the LLM. `--output-dir` overrides the default `data/output` directory.
+
+`sagemaker_run.sh` runs the same collector. It requires `OPENAI_API_KEY` in the environment and writes under `data/output`. It does not upload to S3.
+
+```bash
+chmod +x sagemaker_run.sh
+./sagemaker_run.sh --input data/input/new_device_models.csv
 ```
 
 ---
@@ -188,14 +206,18 @@ Results are written to `data/output/<input_stem>_output.csv` and `data/output/<i
 | `OPENAI_API_KEY` | *(required)* | Your OpenAI API key |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Model to use |
 | `OPENAI_TEMPERATURE` | `0.0` | Sampling temperature |
-| `OPENAI_MAX_TOKENS` | `4096` | Max output tokens per call |
-| `OPENAI_TIMEOUT` | `60.0` | HTTP timeout in seconds |
+| `OPENAI_MAX_TOKENS` | `6000` | Max output tokens per call |
+| `OPENAI_TIMEOUT` | `120.0` | HTTP timeout in seconds |
 | `OPENAI_MAX_RETRIES` | `3` | Retry attempts for API errors |
-| `BATCH_SIZE` | `5` | Devices per LLM call |
-| `MAX_CONCURRENCY` | `4` | Parallel LLM requests |
-| `TOKEN_BUDGET_PER_BATCH` | `6000` | Soft token ceiling per batch |
+| `BATCH_SIZE` | `20` | Devices per LLM call |
+| `MAX_CONCURRENCY` | `8` | Parallel LLM requests |
+| `TOKEN_BUDGET_PER_BATCH` | `12000` | Soft token ceiling per batch |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `ENABLE_CACHE` | `true` | Cache LLM responses to disk |
+| `COST_PER_1K_INPUT_TOKENS` | `0.00015` | USD per 1K input tokens used for the run cost estimate |
+| `COST_PER_1K_OUTPUT_TOKENS` | `0.0006` | USD per 1K output tokens used for the run cost estimate |
+
+Defaults match `app/config.py` and `.env.example`. Copy `.env.example` to `.env` and set `OPENAI_API_KEY` there. Do not commit `.env`.
 
 ---
 
