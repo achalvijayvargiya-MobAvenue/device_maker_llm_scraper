@@ -20,6 +20,7 @@ from pathlib import Path
 OUTPUT_DIR = Path("data/output")
 IN_FILE = OUTPUT_DIR / "final_enriched_output_v2.csv"
 OUT_FILE = OUTPUT_DIR / "final_enriched_output_v3.csv"
+INVALID_FILE = OUTPUT_DIR / "final_invalid.csv"
 
 CHIPSET_TIER_MAP = {"low": "l", "mid": "m", "high": "h"}
 GPU_CLASS_MAP = {"weak": "w", "mid": "m", "high": "h"}
@@ -120,6 +121,17 @@ def main() -> None:
     df = pd.read_csv(IN_FILE)
     print(f"  {len(df):,} rows, {len(df.columns)} columns")
 
+    # Check required columns and filter invalid rows before mapping U
+    required_cols = ["price_inr", "ram_gb", "storage_gb", "months_since_launch"]
+    is_invalid = df.apply(lambda row: any(is_missing(row[col]) for col in required_cols if col in df.columns), axis=1)
+    
+    invalid_df = df[is_invalid]
+    df = df[~is_invalid].reset_index(drop=True)
+    
+    invalid_df.to_csv(INVALID_FILE, index=False)
+    print(f"  Filtered {len(invalid_df):,} invalid rows to: {INVALID_FILE}")
+    print(f"  Remaining rows for compaction: {len(df):,}")
+
     df["price_inr"] = df["price_inr"].map(bucket_price_inr)
     df["antutu_score"] = df["antutu_score"].map(bucket_antutu_score)
     df["chipset_tier"] = df["chipset_tier"].map(map_chipset_tier)
@@ -127,9 +139,6 @@ def main() -> None:
     df["wifi"] = df["wifi"].map(map_wifi)
     df["cooling_system"] = df["cooling_system"].map(map_cooling_system)
 
-    before_u = int(df.apply(lambda row: any(is_missing(v) for v in row), axis=1).sum())
-    df = df.map(replace_missing_with_u)
-    print(f"  Rows with at least one missing value -> U: {before_u:,}")
 
     df.to_csv(OUT_FILE, index=False)
     print(f"Saved: {OUT_FILE}")

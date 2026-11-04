@@ -19,6 +19,16 @@ class DeviceInput(BaseModel):
 
     brand: str = Field(..., min_length=1, description="Device manufacturer name")
     model: str = Field(..., min_length=1, description="Device model / version string")
+    original_brand: Optional[str] = None
+    original_model: Optional[str] = None
+
+    @property
+    def final_brand(self) -> str:
+        return self.original_brand if self.original_brand else self.brand
+
+    @property
+    def final_model(self) -> str:
+        return self.original_model if self.original_model else self.model
 
     @field_validator("brand", "model", mode="before")
     @classmethod

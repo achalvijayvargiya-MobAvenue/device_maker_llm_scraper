@@ -71,20 +71,40 @@ def clean_and_save_data(filepath: Path) -> Path:
     print(f"Loaded rows: {len(df):,}")
     print(f"Columns: {len(df.columns)}")
 
-    for col in df.select_dtypes(include="object").columns:
-        df[col] = df[col].apply(clean_text_val)
+    numerical_cols = {
+        "display_size_inch", "screen_resolution", "display_refresh_hz", 
+        "price_inr", "back_camera_mp_total", "front_camera_mp", 
+        "cpu_cores", "antutu_score", "ram_gb", "storage_gb", 
+        "battery_mah", "nfc", "5g_supported", "months_since_launch"
+    }
+
+    mode_exclude_cols = {"price_inr", "ram_gb", "storage_gb", "months_since_launch","launch_date"}
+
+    def is_missing_string(val) -> bool:
+        if pd.isna(val):
+            return True
+        s = str(val).strip().lower()
+        return s in {"", "none", "null", "nan"}
 
     for col in df.columns:
-        try:
-            temp = pd.to_numeric(df[col])
+        if col in numerical_cols:
+            temp = pd.to_numeric(df[col], errors='coerce')
+            if col not in mode_exclude_cols:
+                non_null_vals = temp.dropna()
+                if not non_null_vals.empty:
+                    modes = non_null_vals.mode()
+                    if not modes.empty:
+                        col_mode = modes.iloc[0]
+                        temp = temp.fillna(col_mode)
             # If the column became a float but all non-null values are whole numbers,
             # cast to 'Int64' (nullable integer) so it writes '8' instead of '8.0' to CSV.
             if pd.api.types.is_float_dtype(temp) and (temp.dropna() % 1 == 0).all():
                 df[col] = temp.astype("Int64")
             else:
                 df[col] = temp
-        except:
-            pass
+        else:
+            df[col] = df[col].apply(clean_text_val)
+            df[col] = df[col].apply(lambda x: "U" if is_missing_string(x) else x)
 
     output_path = filepath.with_name(f"{filepath.stem}_clean.csv")
     df.to_csv(
@@ -99,11 +119,25 @@ def clean_and_save_data(filepath: Path) -> Path:
     print(f"Columns: {df.shape[1]}\n")
     return output_path
 
+def run_script(script_name: str) -> None:
+    """Run a standalone python script as a subprocess."""
+    print(f"\n=========================================")
+    print(f"Running downstream script: {script_name}")
+    print(f"=========================================")
+    try:
+        # sys.executable ensures we use the same Python interpreter/venv
+        subprocess.run([sys.executable, script_name], check=True)
+        print(f"Finished {script_name} successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Script {script_name} failed with return code {e.returncode}")
+        sys.exit(e.returncode)
+
 def main():
     parser = argparse.ArgumentParser(description="Automate fetching new devices from Athena and running LLM Scraper.")
     parser.add_argument("--start-date", required=True, help="Start date in YYYY-MM-DD format")
     parser.add_argument("--end-date", required=True, help="End date in YYYY-MM-DD format")
     parser.add_argument("--limit", type=int, help="Optional limit for the number of devices to fetch and scrape.")
+    parser.add_argument("--s3-filename", help="Optional custom filename for the final complete table in S3.")
     args = parser.parse_args()
 
     try:
@@ -136,14 +170,21 @@ def main():
     date_conditions = generate_date_conditions(start_date, end_date)
     
     query = f"""
-SELECT DISTINCT LOWER(TRIM(device_model)) as device_model , LOWER(TRIM(device_manufacturer)) as device_manufacturer
+SELECT DISTINCT 
+    LOWER(TRIM(device_model)) AS device_model,
+    LOWER(TRIM(device_manufacturer)) AS device_manufacturer
 FROM {athena_database}.rtb_bids
 WHERE (
-      {date_conditions}
+    {date_conditions}
 )
+
+
 EXCEPT
-SELECT DISTINCT LOWER(TRIM(device_model)) as device_model , LOWER(TRIM(device_manufacturer)) as device_manufacturer
-FROM imp_tables.device_specs_iceberg
+
+SELECT DISTINCT 
+    LOWER(TRIM(device_model)) AS device_model,
+    LOWER(TRIM(device_manufacturer)) AS device_manufacturer
+FROM aayushi.device_features
     """.strip()
     
     if args.limit:
@@ -263,6 +304,62 @@ FROM imp_tables.device_specs_iceberg
                 except Exception as e:
                     print(f"Error uploading to S3: {e}")
                     sys.exit(1)
+                    
+                # 8.5 Prepare files for downstream combination and enrichment scripts
+                file_a = Path("data/output/all_device_model_output.csv")
+                file_b = Path("data/output/pending_device_output.csv")
+                
+                # Copy newly scraped and cleaned output to all_device_model_output.csv
+                print(f"\nCopying {clean_csv_path.name} to {file_a.name} for downstream processing...")
+                import shutil
+                shutil.copy(str(clean_csv_path), str(file_a))
+                
+                # If pending_device_output.csv doesn't exist, create an empty CSV placeholder with matching headers
+                if not file_b.exists():
+                    print(f"Creating empty CSV placeholder for {file_b.name}...")
+                    df_headers = pd.read_csv(clean_csv_path, nrows=0)
+                    df_headers.to_csv(file_b, index=False)
+                    
+                # If unique_apps.csv doesn't exist, create a minimal placeholder
+                unique_apps_file = Path("data/output/unique_apps.csv")
+                if not unique_apps_file.exists():
+                    print(f"Creating minimal CSV placeholder for {unique_apps_file.name}...")
+                    pd.DataFrame(columns=["device_manufacturer", "device_model"]).to_csv(unique_apps_file, index=False)
+                    
+                # If device_specs.csv doesn't exist, create a minimal placeholder
+                device_specs_file = Path("data/output/device_specs.csv")
+                if not device_specs_file.exists():
+                    print(f"Creating minimal CSV placeholder for {device_specs_file.name}...")
+                    pd.DataFrame(columns=["device_manufacturer", "device_model", "launch_date", "cooling_system", "price_inr"]).to_csv(device_specs_file, index=False)
+                    
+                # 9. Run downstream orchestration scripts
+                run_script("combine_outputs.py")
+                run_script("enrich_from_unique_apps.py")
+                run_script("enrich_from_device_specs.py")
+                run_script("compact_enriched_output.py")
+                run_script("split_output.py")
+
+                # 10. Upload final complete table to S3 location
+                final_complete_path = Path("data/output/final_complete.csv")
+                if final_complete_path.exists():
+                    print(f"\nUploading final complete table to S3...")
+                    s3_dest_bucket = "mobavenue-simplismart-aws-s3-apse-sg"
+                    
+                    now = datetime.datetime.now()
+                    date_folder = now.strftime("%Y%m%d")
+                    timestamp = now.strftime("%Y%m%d_%H%M%S")
+                    s3_filename = args.s3_filename if args.s3_filename else f"{timestamp}.csv"
+                    s3_dest_key_base = f"rtb/data/aayushi/device_features/{date_folder}/{s3_filename}"
+                    
+                    try:
+                        # Upload to base folder
+                        s3_client.upload_file(str(final_complete_path), s3_dest_bucket, s3_dest_key_base)
+                        print(f"Successfully uploaded final complete table to s3://{s3_dest_bucket}/{s3_dest_key_base}")
+                    except Exception as e:
+                        print(f"Error uploading final complete table to S3: {e}")
+                        sys.exit(1)
+                else:
+                    print(f"Warning: final_complete.csv not found at {final_complete_path}")
                     
             print("\nAutomation completed successfully!")
     except KeyboardInterrupt:

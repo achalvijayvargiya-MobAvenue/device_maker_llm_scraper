@@ -9,7 +9,7 @@ from pathlib import Path
 
 OUTPUT_DIR = Path("data/output")
 
-FINAL           = OUTPUT_DIR / "final_combined_output.csv"
+FINAL           = OUTPUT_DIR / "final_enriched_output_v3.csv"
 COMPLETE_FILE   = OUTPUT_DIR / "final_complete.csv"
 INCOMPLETE_FILE = OUTPUT_DIR / "final_incomplete.csv"
 
@@ -23,9 +23,13 @@ print(f"Loaded: {len(df):,} rows, {len(df.columns)} columns")
 def _is_blank(val) -> bool:
     if pd.isna(val):
         return True
-    return str(val).strip() == ""
+    s = str(val).strip()
+    return s == "" or s == "U"
 
-any_blank_mask = df.apply(lambda row: any(_is_blank(v) for v in row), axis=1)
+required_cols = ["price_inr", "ram_gb", "storage_gb", "months_since_launch"]
+any_blank_mask = df.apply(
+    lambda row: any(_is_blank(row[col]) for col in required_cols if col in df.columns), axis=1
+)
 
 complete   = df[~any_blank_mask].reset_index(drop=True)
 incomplete = df[any_blank_mask].reset_index(drop=True)

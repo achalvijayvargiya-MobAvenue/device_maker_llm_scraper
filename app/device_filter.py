@@ -74,6 +74,7 @@ _BRAND_NORM_MAP: dict[str, str] = {
     "tct (alcatel)": "Alcatel",
     "tct": "Alcatel",
     "motorola mobility": "Motorola",
+    "motorola solutions":"Motorola",
     "htc corporation": "HTC",
     "samsung electronics": "Samsung",
     "huawei technologies": "Huawei",
@@ -296,11 +297,12 @@ def filter_devices(
     Returns
     -------
     tuple[list[DeviceInput], list[dict]]
-        - valid_devices: brand/model normalized, ready for scraping/LLM.
+        - valid_devices: brand/model normalized and deduplicated, ready for scraping/LLM.
         - skipped_records: dicts with original brand/model + skip_reason, for audit CSV.
     """
     valid: list[DeviceInput] = []
     skipped: list[dict] = []
+    seen: set[tuple[str, str]] = set()
 
     for device in devices:
         result = classify_device(device)
@@ -314,12 +316,22 @@ def filter_devices(
             )
             logger.debug("SKIP %s %s — %s", device.brand, device.model, result.skip_reason)
         else:
-            valid.append(
-                DeviceInput(
-                    brand=result.normalized_brand or device.brand,
-                    model=result.normalized_model or device.model,
+            final_brand = result.normalized_brand or device.brand
+            final_model = result.normalized_model or device.model
+            key = (final_brand.lower(), final_model.lower())
+            
+            if key not in seen:
+                seen.add(key)
+                valid.append(
+                    DeviceInput(
+                        brand=final_brand,
+                        model=final_model,
+                        original_brand=device.brand,
+                        original_model=device.model,
+                    )
                 )
-            )
+            else:
+                logger.debug("SKIP duplicate %s %s", final_brand, final_model)
 
     skip_pct = 100.0 * len(skipped) / max(len(devices), 1)
     logger.info(
