@@ -267,8 +267,8 @@ class ScrapePipeline:
             # Emit null specs to keep row count consistent
             fallback_specs = [
                 DeviceSpec(
-                    device_manufacturer=d.brand,
-                    device_model=d.model,
+                    device_manufacturer=d.final_brand,
+                    device_model=d.final_model,
                 )
                 for d in scrape_not_found
             ]
@@ -310,6 +310,9 @@ class ScrapePipeline:
                 spec = await scraper.lookup(brand=device.brand, model=device.model)
 
                 if spec is not None:
+                    # OVERRIDE the spec's manufacturer with the original brand!
+                    spec.device_manufacturer = device.final_brand
+                    spec.device_model = device.final_model
                     found.append((device, spec))
                     spec_store[key] = spec.to_flat_dict()
                 else:
@@ -389,8 +392,8 @@ class ScrapePipeline:
                             })
                         except Exception:
                             all_specs[abs_idx] = DeviceSpec(
-                                device_manufacturer=devices[abs_idx].brand,
-                                device_model=devices[abs_idx].model,
+                                device_manufacturer=devices[abs_idx].final_brand,
+                                device_model=devices[abs_idx].final_model,
                             )
             device_offset += len(batch)
 
@@ -423,14 +426,14 @@ class ScrapePipeline:
                         [derive_missing_fields(s) for s in result.devices_extracted]
                         if result.success and result.devices_extracted
                         else [
-                            DeviceSpec(device_manufacturer=d.brand, device_model=d.model)
+                            DeviceSpec(device_manufacturer=d.final_brand, device_model=d.final_model)
                             for d in batch
                         ]
                     )
                 except Exception as exc:
                     logger.warning("LLM fallback batch %d failed: %s", b_idx, exc)
                     specs = [
-                        DeviceSpec(device_manufacturer=d.brand, device_model=d.model)
+                        DeviceSpec(device_manufacturer=d.final_brand, device_model=d.final_model)
                         for d in batch
                     ]
 
@@ -457,8 +460,8 @@ class ScrapePipeline:
 
         return [
             s if s is not None else DeviceSpec(
-                device_manufacturer=devices[i].brand,
-                device_model=devices[i].model,
+                device_manufacturer=devices[i].final_brand,
+                device_model=devices[i].final_model,
             )
             for i, s in enumerate(all_specs)
         ]

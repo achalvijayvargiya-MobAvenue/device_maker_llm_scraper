@@ -396,13 +396,6 @@ class GSMArenaScraper:
         if brand_entries:
             return self._fuzzy_match_model(model, brand_entries)
 
-        # Brand not found → try with known brand name variants
-        alt_brand = _BRAND_ALIASES.get(brand.lower())
-        if alt_brand:
-            brand_entries = _query_index(self._conn, alt_brand)
-            if brand_entries:
-                return self._fuzzy_match_model(model, brand_entries)
-
         # Cross-brand search with full brand+model query
         full_query = f"{brand} {model}"
         all_entries = _query_index_all(self._conn)
@@ -622,38 +615,6 @@ class GSMArenaScraper:
             return None
         combined_model = f"{match['model_name']} {first_variant}"
         return _build_device_url(match["brand_name"], combined_model, match["device_id"])
-
-
-# ---------------------------------------------------------------------------
-# Known brand aliases (for brands not in GSMArena's list exactly)
-# ---------------------------------------------------------------------------
-
-_BRAND_ALIASES: dict[str, str] = {
-    "lg": "LG",
-    "oneplus": "OnePlus",
-    "poco": "POCO",
-    "zte": "ZTE",
-    "htc": "HTC",
-    "lge": "LG",
-    "tcl": "TCL",
-    "nothing": "Nothing",
-    "google": "Google",
-    "nokia": "Nokia",
-    "motorola": "Motorola",
-    "samsung": "Samsung",
-    "apple": "Apple",
-    "xiaomi": "Xiaomi",
-    "huawei": "Huawei",
-    "oppo": "Oppo",
-    "vivo": "vivo",
-    "realme": "Realme",
-    "infinix": "Infinix",
-    "tecno": "Tecno",
-    "honor": "Honor",
-    "asus": "Asus",
-    "sony": "Sony",
-    "lenovo": "Lenovo",
-}
 
 
 # ---------------------------------------------------------------------------

@@ -96,11 +96,10 @@ def _parse_and_normalize(
                 raw_dict["five_g_supported"] = raw_dict.pop("5g_supported")
             try:
                 raw_spec = RawDeviceSpec.model_validate(raw_dict)
-                # Ensure manufacturer/model are populated from input as fallback
-                if not raw_spec.device_manufacturer:
-                    raw_spec.device_manufacturer = device_input.brand
-                if not raw_spec.device_model:
-                    raw_spec.device_model = device_input.model
+                # Ensure manufacturer/model are populated from input to guarantee
+                # output matches the input (critical for SQL EXCEPT queries).
+                raw_spec.device_manufacturer = device_input.final_brand
+                raw_spec.device_model = device_input.final_model
                 spec = normalize(raw_spec)
             except Exception as exc:
                 logger.warning(
@@ -111,8 +110,8 @@ def _parse_and_normalize(
                     exc,
                 )
                 spec = DeviceSpec(
-                    device_manufacturer=device_input.brand,
-                    device_model=device_input.model,
+                    device_manufacturer=device_input.final_brand,
+                    device_model=device_input.final_model,
                 )
         else:
             logger.warning(
@@ -123,8 +122,8 @@ def _parse_and_normalize(
                 request_id,
             )
             spec = DeviceSpec(
-                device_manufacturer=device_input.brand,
-                device_model=device_input.model,
+                device_manufacturer=device_input.final_brand,
+                device_model=device_input.final_model,
             )
 
         results.append(spec)
