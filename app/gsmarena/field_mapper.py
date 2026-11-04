@@ -349,15 +349,10 @@ def map_gsmarena_specs(
         return None
 
     # --- Device name ---
-    meta = specs.get("_meta", {})
-    device_title = meta.get("device_title", "")
     device_manufacturer = original_brand
     device_model = original_model
-    if device_title:
-        parts = device_title.split(" ", 1)
-        if len(parts) == 2:
-            device_manufacturer = parts[0]
-            device_model = parts[1]
+    # Do not overwrite these with GSMArena's _title so that the output CSV
+    # retains the exact strings from the input (critical for SQL EXCEPT).
 
     # --- Display ---
     # GSMArena: the "Type" row (first in Display section) contains refresh rate.
