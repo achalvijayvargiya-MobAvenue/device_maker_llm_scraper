@@ -184,7 +184,7 @@ EXCEPT
 SELECT DISTINCT 
     LOWER(TRIM(device_model)) AS device_model,
     LOWER(TRIM(device_manufacturer)) AS device_manufacturer
-FROM aayushi.device_features
+FROM prod.device_features
     """.strip()
     
     if args.limit:
